@@ -1,21 +1,27 @@
 import sys
+import csv
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout,
                              QHBoxLayout, QWidget, QFileDialog, QLabel, QGroupBox)
 
 from audio_io import wczytaj_plik_wav
-from math_engine import (przygotuj_sygnal, podziel_na_ramki,
-                         oblicz_glosnosc, oblicz_zcr, detekcja_ciszy, estymuj_f0)
+from math_engine import (przygotuj_sygnal, podziel_na_ramki, oblicz_ste,
+                         oblicz_glosnosc, oblicz_zcr, detekcja_ciszy,
+                         estymuj_f0, estymuj_f0_amdf, oblicz_vstd, oblicz_vdr,
+                         oblicz_vu, oblicz_lster, oblicz_energy_entropy,
+                         oblicz_zstd, oblicz_hzcrr, generuj_spektrogram, klasyfikuj_mowa_muzyka)
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("AiPD - Analiza Dźwięku 5.0")
-        self.setGeometry(100, 100, 1000, 700)
+        self.setWindowTitle("AiPD - Analiza Dźwięku 5.0 (Pro)")
+        self.setGeometry(100, 100, 1200, 900)
 
-        # GŁÓWNY UKŁAD OKNA (Poziomy: Lewo Wykresy, Prawo Parametry)
+        # Magazyn na wyniki (do eksportu)
+        self.aktualne_wyniki = {}
+
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QHBoxLayout(central_widget)
@@ -25,143 +31,131 @@ class MainWindow(QMainWindow):
         left_layout = QVBoxLayout(left_panel)
 
         self.btn_wczytaj = QPushButton("Wczytaj plik WAV")
+        self.btn_wczytaj.setFixedHeight(40)
         self.btn_wczytaj.clicked.connect(self.wczytaj_i_analizuj)
         left_layout.addWidget(self.btn_wczytaj)
 
-        # Wykres 1: Przebieg czasowy (Sygnał)
-        self.plot_sygnal = pg.PlotWidget(title="Przebieg czasowy (Amplituda)")
-        self.plot_sygnal.showGrid(x=True, y=True)
+        # Wykresy (Sygnał, Głośność, ZCR, F0, Spektrogram)
+        self.plot_sygnal = pg.PlotWidget(title="1. Przebieg czasowy (Amplituda)")
+        self.plot_glosnosc = pg.PlotWidget(title="2. Głośność (Volume)")
+        self.plot_zcr = pg.PlotWidget(title="3. Zero Crossing Rate (ZCR)")
+        self.plot_f0 = pg.PlotWidget(title="4. Ton podstawowy (F0)")
+        self.plot_spec = pg.PlotWidget(title="5. Spektrogram (Widmo)")
+
+        self.img_spec = pg.ImageItem()
+        self.plot_spec.addItem(self.img_spec)
+        self.img_spec.setLookupTable(pg.colormap.get('inferno').getLookupTable())
+
+        plots = [self.plot_sygnal, self.plot_glosnosc, self.plot_zcr, self.plot_f0, self.plot_spec]
+        for p in plots:
+            p.showGrid(x=True, y=True)
+            left_layout.addWidget(p)
+            if p != self.plot_sygnal: p.setXLink(self.plot_sygnal)
+
         self.krzywa_sygnalu = self.plot_sygnal.plot(pen='y')
-        left_layout.addWidget(self.plot_sygnal)
+        self.krzywa_glosnosci = self.plot_glosnosc.plot(pen='c')
+        self.krzywa_zcr = self.plot_zcr.plot(pen='m')
+        self.plot_f0.addLegend()
+        self.krzywa_f0 = self.plot_f0.plot(pen='g', symbol='o', symbolSize=4, name="F0 Auto")
+        self.krzywa_f0_amdf = self.plot_f0.plot(pen='c', symbol='t', symbolSize=4, name="F0 AMDF")
 
-        # Wykres 2: Głośność (Volume)
-        self.plot_glosnosc = pg.PlotWidget(title="Głośność w ramkach (Volume)")
-        self.plot_glosnosc.showGrid(x=True, y=True)
-        self.krzywa_glosnosci = self.plot_glosnosc.plot(pen='c')  # 'c' - cyan
-        left_layout.addWidget(self.plot_glosnosc)
-
-        # Wykres 3: ZCR
-        self.plot_zcr = pg.PlotWidget(title="Zero Crossing Rate (ZCR)")
-        self.plot_zcr.showGrid(x=True, y=True)
-        self.krzywa_zcr = self.plot_zcr.plot(pen='m')  # 'm' - magenta
-        left_layout.addWidget(self.plot_zcr)
-
-        # Wykres 4: Ton podstawowy (F0)
-        self.plot_f0 = pg.PlotWidget(title="Ton podstawowy (F0) - Autokorelacja")
-        self.plot_f0.showGrid(x=True, y=True)
-        self.krzywa_f0 = self.plot_f0.plot(pen='g', symbol='o', symbolSize=4)  # 'g' - zielony z kropkami
-        left_layout.addWidget(self.plot_f0)
-
-        # Pamiętaj o synchronizacji osi X!
-        self.plot_f0.setXLink(self.plot_sygnal)
-
-        # SYNCHRONIZACJA OSI X (Zoomowanie jednego przybliża wszystkie)
-        self.plot_glosnosc.setXLink(self.plot_sygnal)
-        self.plot_zcr.setXLink(self.plot_sygnal)
-
-        main_layout.addWidget(left_panel, stretch=3)  # Wykresy zajmą 3/4 szerokości
+        main_layout.addWidget(left_panel, stretch=3)
 
         # ================= PANEL PRAWY (STATYSTYKI) =================
-        right_panel = QGroupBox("Parametry nagrania (Clip-Level)")
-        right_layout = QVBoxLayout(right_panel)
+        right_group = QGroupBox("Parametry klipu (Clip-Level)")
+        right_layout = QVBoxLayout(right_group)
 
-        self.lbl_info = QLabel("Brak wczytanego pliku.")
-        self.lbl_glosnosc_max = QLabel("Max Głośność: -")
-        self.lbl_zcr_srednie = QLabel("Średnie ZCR: -")
+        self.lbl_klasyfikacja = QLabel("KLASYFIKACJA: -")
+        self.lbl_klasyfikacja.setStyleSheet("font-size: 16px; font-weight: bold; color: #ffaa00;")
+        right_layout.addWidget(self.lbl_klasyfikacja)
 
-        right_layout.addWidget(self.lbl_info)
-        right_layout.addWidget(self.lbl_glosnosc_max)
-        right_layout.addWidget(self.lbl_zcr_srednie)
-        right_layout.addStretch()  # Wypycha tekst do góry
+        self.stats_labels = {}
+        for key in ["Info", "VSTD", "VDR", "VU", "LSTER", "Entropy", "ZSTD", "HZCRR"]:
+            lbl = QLabel(f"{key}: -")
+            lbl.setStyleSheet("font-family: 'Consolas';")
+            right_layout.addWidget(lbl)
+            self.stats_labels[key] = lbl
 
-        main_layout.addWidget(right_panel, stretch=1)  # Panel zajmie 1/4 szerokości
+        # PRZYCISK EKSPORTU
+        self.btn_eksport = QPushButton("Eksportuj wyniki do CSV")
+        self.btn_eksport.setFixedHeight(40)
+        self.btn_eksport.setEnabled(False)  # Wyłączony dopóki nie ma danych
+        self.btn_eksport.clicked.connect(self.eksportuj_do_csv)
+        right_layout.addWidget(self.btn_eksport)
+
+        right_layout.addStretch()
+        main_layout.addWidget(right_group, stretch=1)
 
     def wczytaj_i_analizuj(self):
         sciezka, _ = QFileDialog.getOpenFileName(self, "Wybierz plik WAV", "", "Pliki WAV (*.wav)")
+        if not sciezka: return
 
-        if sciezka:
-            czestotliwosc, amplitudy = wczytaj_plik_wav(sciezka)
-            if amplitudy is None: return
+        fs, amplitudy = wczytaj_plik_wav(sciezka)
+        if amplitudy is None: return
 
-            # 1. Rysowanie sygnału i blokada osi
-            self.krzywa_sygnalu.setData(amplitudy)
-            self.plot_f0.setLimits(xMin=0, xMax=len(amplitudy), yMin=0, yMax=600)
-            self.plot_f0.autoRange()
-            # ZABEZPIECZENIE: Ustawiamy granice (limits), żeby wykres nie uciekł
-            self.plot_sygnal.setLimits(xMin=0, xMax=len(amplitudy), yMin=-35000, yMax=35000)
-            # Automatycznie dopasowujemy widok po wczytaniu
-            self.plot_sygnal.autoRange()
+        sygnal_np = przygotuj_sygnal(amplitudy)
+        ramki = podziel_na_ramki(sygnal_np, fs)
+        ste = oblicz_ste(ramki)
+        glosnosc = oblicz_glosnosc(ramki)
+        zcr = oblicz_zcr(ramki)
+        f0_auto = estymuj_f0(ramki, fs)
+        f0_amdf = estymuj_f0_amdf(ramki, fs)
 
-            # 2. Matematyka - Analiza Ramek
-            sygnal_np = przygotuj_sygnal(amplitudy)
-            ramki = podziel_na_ramki(sygnal_np, czestotliwosc, dlugosc_ramki_ms=20)
+        # Wyliczanie Clip-Level
+        vstd = oblicz_vstd(glosnosc)
+        vdr = oblicz_vdr(glosnosc)
+        vu = oblicz_vu(glosnosc)
+        lster = oblicz_lster(ste)
+        entropy = oblicz_energy_entropy(ramki)
+        zstd = oblicz_zstd(zcr)
+        hzcrr = oblicz_hzcrr(zcr)
+        typ = klasyfikuj_mowa_muzyka(lster, hzcrr)
 
-            glosnosc = oblicz_glosnosc(ramki)
-            zcr = oblicz_zcr(ramki)
+        # Zapisujemy wyniki do słownika (dla eksportu)
+        self.aktualne_wyniki = {
+            "Plik": sciezka.split('/')[-1],
+            "FS": fs,
+            "VSTD": f"{vstd:.4f}",
+            "VDR": f"{vdr:.4f}",
+            "VU": f"{vu:.2f}",
+            "LSTER": f"{lster:.4f}",
+            "Entropy": f"{entropy:.2f}",
+            "ZSTD": f"{zstd:.4f}",
+            "HZCRR": f"{hzcrr:.4f}",
+            "Klasyfikacja": typ
+        }
+        self.btn_eksport.setEnabled(True)
+
+        # Aktualizacja GUI
+        spec_data = generuj_spektrogram(ramki)
+        self.img_spec.setImage(spec_data.T)
+        self.img_spec.setRect(pg.QtCore.QRectF(0, 0, len(ramki) * int(0.02 * fs), fs / 2))
+
+        os_x = np.arange(len(ramki)) * int(0.02 * fs)
+        self.krzywa_sygnalu.setData(amplitudy)
+        self.krzywa_glosnosci.setData(x=os_x, y=glosnosc)
+        self.krzywa_zcr.setData(x=os_x, y=zcr)
+        self.krzywa_f0.setData(x=os_x, y=f0_auto)
+        self.krzywa_f0_amdf.setData(x=os_x, y=f0_amdf)
+
+        self.lbl_klasyfikacja.setText(f"KLASYFIKACJA: {typ}")
+        for k, v in self.aktualne_wyniki.items():
+            if k in self.stats_labels: self.stats_labels[k].setText(f"{k}: {v}")
+
+        self.plot_sygnal.autoRange()
+
+    def eksportuj_do_csv(self):
+        if not self.aktualne_wyniki: return
+
+        sciezka_zapisu, _ = QFileDialog.getSaveFileName(self, "Zapisz wyniki", "wyniki_analizy.csv",
+                                                        "Pliki CSV (*.csv)")
+        if sciezka_zapisu:
+            with open(sciezka_zapisu, mode='w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=self.aktualne_wyniki.keys())
+                writer.writeheader()
+                writer.writerow(self.aktualne_wyniki)
 
 
-
-
-            # 3. Rysowanie parametrów
-            # Tworzymy oś X dla ramek, żeby odpowiadała czasowi z głównego wykresu
-            rozmiar_ramki = int((20 / 1000.0) * czestotliwosc)
-            os_x_ramki = np.arange(len(ramki)) * rozmiar_ramki
-
-            self.krzywa_glosnosci.setData(x=os_x_ramki, y=glosnosc)
-            self.krzywa_zcr.setData(x=os_x_ramki, y=zcr)
-
-
-
-            f0_wartosci = estymuj_f0(ramki, czestotliwosc)
-            self.krzywa_f0.setData(x=os_x_ramki, y=f0_wartosci)
-
-            # 4. Aktualizacja prawego panelu ze statystykami
-            nazwa = sciezka.split('/')[-1]
-            self.lbl_info.setText(f"Plik: {nazwa}\nPróbkowanie: {czestotliwosc} Hz\nLiczba ramek: {len(ramki)}")
-            self.lbl_glosnosc_max.setText(f"Max Głośność: {np.max(glosnosc):.2f}")
-            self.lbl_zcr_srednie.setText(f"Średnie ZCR: {np.mean(zcr):.4f}")
-
-
-
-
-
-
-            # --- DETEKCJA I ZAZNACZANIE CISZY ---
-
-            # 1. Czyszczenie starych zaznaczeń (POPRAWIONE)
-            # Używamy nawiasów (), bo items() to metoda
-            for item in self.plot_sygnal.items():
-                if isinstance(item, pg.LinearRegionItem):
-                    self.plot_sygnal.removeItem(item)
-
-            # 2. Wywołanie funkcji matematycznej (SR)
-            prog_vol = np.max(glosnosc) * 0.03
-            cisza_tablica = detekcja_ciszy(glosnosc, zcr, prog_glosnosci=prog_vol, prog_zcr=0.1)
-
-            # 3. Malowanie czerwonych bloków ciszy
-            for i, czy_cisza in enumerate(cisza_tablica):
-                if czy_cisza:
-                    start_probka = i * rozmiar_ramki
-                    koniec_probka = start_probka + rozmiar_ramki
-
-                    region = pg.LinearRegionItem(values=[start_probka, koniec_probka],
-                                                 brush=(255, 0, 0, 50),
-                                                 movable=False)
-                    region.lines[0].setPen(pg.mkPen(None))
-                    region.lines[1].setPen(pg.mkPen(None))
-                    self.plot_sygnal.addItem(region)
-
-            # --- BLOKADY OSI (LIMITS) DLA POZOSTAŁYCH WYKRESÓW ---
-
-            # Blokada dla Głośności
-            self.plot_glosnosc.setLimits(xMin=0, xMax=len(amplitudy),
-                                         yMin=0, yMax=np.max(glosnosc) * 1.1)
-            self.plot_glosnosc.autoRange()
-
-            # Blokada dla ZCR
-            self.plot_zcr.setLimits(xMin=0, xMax=len(amplitudy),
-                                    yMin=0, yMax=np.max(zcr) * 1.1)
-            self.plot_zcr.autoRange()
 def main():
     app = QApplication(sys.argv)
     window = MainWindow()

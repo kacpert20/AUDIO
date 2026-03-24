@@ -88,13 +88,16 @@ def oblicz_autokorelacje(ramka):
 def oblicz_amdf(ramka):
     """
     Funkcja AMDF A_n(l). Szuka różnic między przesuniętymi sygnałami.
+    POPRAWKA: Dzielimy przez (N-l), żeby uzyskać ŚREDNIĄ różnicę.
     """
     N = len(ramka)
     A = np.zeros(N)
 
     for l in range(N):
-        # Odejmujemy przesunięty sygnał od nieprzesuniętego i sumujemy wartości bezwzględne
-        A[l] = np.sum(np.abs(ramka[l:] - ramka[:N - l]))
+        ile_probek = N - l
+        if ile_probek > 0:
+            # Teraz dzielimy sumę przez liczbę próbek, które faktycznie porównaliśmy!
+            A[l] = np.sum(np.abs(ramka[l:] - ramka[:N - l])) / ile_probek
 
     return A
 
@@ -109,7 +112,8 @@ def estymuj_f0(ramki, fs):
     max_lag = int(fs / 50)
 
     for i, ramka in enumerate(ramki):
-        if np.max(np.abs(ramka)) < 50:
+        # SPRZĄTANIE 1: Ignorujemy ciche szmery. Zwiększamy próg z 50 na 200.
+        if np.max(np.abs(ramka)) < 200:
             continue
 
         R = oblicz_autokorelacje(ramka)
@@ -121,11 +125,151 @@ def estymuj_f0(ramki, fs):
                 idx_piku = np.argmax(fragment)
                 wartosc_piku = fragment[idx_piku]
 
-                # Zabezpieczenie przed szumem/bezdźwięcznością:
-                if wartosc_piku > 0.3 * R[0]:
+                # NOWY WARUNEK: Jeśli pik uderza w sufit (500Hz), to zrzucamy do zera
+                if idx_piku == 0:
+                    f0_tab[i] = 0
+                elif wartosc_piku > 0.25 * R[0]:  # Tutaj Twój próg energii
                     pik = idx_piku + min_lag
                     f0_tab[i] = fs / pik
                 else:
-                    f0_tab[i] = 0  # Fragment bezdźwięczny / szum
+                    f0_tab[i] = 0
 
     return f0_tab
+
+
+def estymuj_f0_amdf(ramki, fs):
+    """
+    Wylicza F0 (w Hz) dla każdej ramki używając funkcji AMDF.
+    AMDF szuka MINIMUM różnicy, w przeciwieństwie do autokorelacji.
+    """
+    f0_tab = np.zeros(len(ramki))
+    min_lag = int(fs / 500)
+    max_lag = int(fs / 50)
+
+    for i, ramka in enumerate(ramki):
+        # Sprzątanie cichych szmerów (ten sam próg co wcześniej)
+        if np.max(np.abs(ramka)) < 200:
+            continue
+
+        A = oblicz_amdf(ramka)
+        prawdziwy_max_lag = min(max_lag, len(A) - 1)
+
+        if min_lag < prawdziwy_max_lag:
+            fragment = A[min_lag:prawdziwy_max_lag]
+            if len(fragment) > 0:
+                if len(fragment) > 0:
+                    idx_dolka = np.argmin(fragment)
+                    wartosc_dolka = fragment[idx_dolka]
+
+
+                    if idx_dolka == 0:
+                        f0_tab[i] = 0
+                    elif wartosc_dolka < 0.8 * np.max(fragment):
+                        pik = idx_dolka + min_lag
+                        f0_tab[i] = fs / pik
+                    else:
+                        f0_tab[i] = 0
+
+    return f0_tab
+
+
+# =========================================================================
+# 2. PARAMETRY NA POZIOMIE KLIPU (CLIP-LEVEL)
+# =========================================================================
+
+# --- 2.1. BAZUJĄCE NA GŁOŚNOŚCI ---
+
+def oblicz_vstd(glosnosc):
+    """2.1.1. Odchylenie standardowe głośności normalizowane przez Max głośność."""
+    max_v = np.max(glosnosc)
+    if max_v == 0: return 0
+    return np.std(glosnosc) / max_v
+
+
+def oblicz_vdr(glosnosc):
+    """2.1.2. Volume Dynamic Range - Zakres dynamiki głośności."""
+    max_v = np.max(glosnosc)
+    if max_v == 0: return 0
+    return (max_v - np.min(glosnosc)) / max_v
+
+
+def oblicz_vu(glosnosc):
+    """2.1.3. Volume Undulation - Falistość głośności (różnice szczytów i dolin)."""
+    # Znajdujemy różnice między sąsiednimi próbkami głośności
+    diffs = np.diff(glosnosc)
+    # Sumujemy wartości bezwzględne zmian kierunku (uproszczona falistość)
+    return np.sum(np.abs(diffs))
+
+
+# --- 2.2. BAZUJĄCE NA ENERGII ---
+
+def oblicz_lster(ste):
+    """
+    2.2.1. Low Short Time Energy Ratio.
+    Odsetek ramek, gdzie STE < 50% średniej STE.
+    """
+    avSTE = np.mean(ste)  # Średnia dla całego klipu (uproszczone okno 1s)
+    N = len(ste)
+    if N == 0 or avSTE == 0: return 0
+
+    # Implementacja wzoru ze sgn: (sgn(0.5*avSTE - STE) + 1) / 2
+    count = np.sum((np.sign(0.5 * avSTE - ste) + 1) / 2)
+    return count / N
+
+
+def oblicz_energy_entropy(ramki):
+    """
+    2.2.2. Energy Entropy.
+    Dzieli klip na segmenty, liczy znormalizowaną energię i entropię.
+    """
+    # Obliczamy energię dla każdej ramki (segmentu)
+    energetyka_ramek = np.sum(ramki ** 2, axis=1)
+    calkowita_energia = np.sum(energetyka_ramek)
+
+    if calkowita_energia == 0: return 0
+
+    # Normalizacja energii: sigma_i^2
+    sigma_sq = energetyka_ramek / calkowita_energia
+
+    # Wzór na entropię: -sum(sigma^2 * log2(sigma^2))
+    # Dodajemy małą wartość 1e-10, żeby nie liczyć log(0)
+    entropy = -np.sum(sigma_sq * np.log2(sigma_sq + 1e-10))
+    return entropy
+
+
+# --- 2.3. BAZUJĄCE NA ZCR ---
+
+def oblicz_zstd(zcr):
+    """2.3.1. Standardowe odchylenie ZCR."""
+    return np.std(zcr)
+
+
+def oblicz_hzcrr(zcr):
+    """
+    2.3.2. High Zero Crossing Rate Ratio.
+    Odsetek ramek, gdzie ZCR > 1.5 * średnia ZCR.
+    """
+    avZCR = np.mean(zcr)
+    N = len(zcr)
+    if N == 0 or avZCR == 0: return 0
+
+    # Wzór: (sgn(ZCR - 1.5*avZCR) + 1) / 2
+    count = np.sum((np.sign(zcr - 1.5 * avZCR) + 1) / 2)
+    return count / N
+
+
+# --- DODATKOWE: SPEKTROGRAM I KLASYFIKACJA ---
+
+def generuj_spektrogram(ramki):
+    """Wylicza FFT dla ramek i zwraca dane w skali dB."""
+    widmo = np.abs(np.fft.rfft(ramki, axis=1))
+    return 20 * np.log10(widmo + 1e-6)
+
+
+def klasyfikuj_mowa_muzyka(lster, hzcrr):
+    """Klasyfikacja na podstawie LSTER i HZCRR."""
+    # Mowa ma zazwyczaj wysoki LSTER (pauzy) i wysoki HZCRR (spółgłoski)
+    if lster < 0.7 :
+        return "MOWA"
+    else:
+        return "MUZYKA / CIĄGŁY TON"
