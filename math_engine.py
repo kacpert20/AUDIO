@@ -266,10 +266,18 @@ def generuj_spektrogram(ramki):
     return 20 * np.log10(widmo + 1e-6)
 
 
-def klasyfikuj_mowa_muzyka(lster, hzcrr):
-    """Klasyfikacja na podstawie LSTER i HZCRR."""
-    # Mowa ma zazwyczaj wysoki LSTER (pauzy) i wysoki HZCRR (spółgłoski)
-    if lster < 0.7 :
+def klasyfikuj_mowa_muzyka(vstd, vdr, hzcrr):
+    """
+    Klasyfikacja eksperymentalna oparta na progach z bazy statystyk.
+    """
+    # 1. Twardy filtr na stabilne, podtrzymywane dźwięki (np. flet, skrzypce)
+    # Jeśli dźwięk nie ma głębokich spadków głośności (VDR < 0.95), to na 100% instrument.
+    if vdr < 0.95 and vstd < 0.15:
+        return "MUZYKA / INSTRUMENT"
+
+    # 2. Główny klasyfikator (szukanie szumiących spółgłosek)
+    # Jeśli HZCRR przebija próg 0.025, mamy do czynienia z mową ludzką.
+    if hzcrr > 0.025:
         return "MOWA"
     else:
-        return "MUZYKA / CIĄGŁY TON"
+        return "MUZYKA / INSTRUMENT"
