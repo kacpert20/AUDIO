@@ -266,18 +266,17 @@ def generuj_spektrogram(ramki):
     return 20 * np.log10(widmo + 1e-6)
 
 
-def klasyfikuj_mowa_muzyka(vstd, vdr, hzcrr):
+def klasyfikuj_mowa_muzyka(lster, entropy):
     """
-    Klasyfikacja eksperymentalna oparta na progach z bazy statystyk.
+    Klasyfikacja eksperymentalna oparta na wyznaczonej paraboli decyzyjnej:
+    Jeśli LSTER jest poniżej krzywej: -0.1 * (Entropy - 3)^2 + 0.8, to MOWA.
+    W przeciwnym wypadku to DŹWIĘK/INSTRUMENT.
     """
-    # 1. Twardy filtr na stabilne, podtrzymywane dźwięki (np. flet, skrzypce)
-    # Jeśli dźwięk nie ma głębokich spadków głośności (VDR < 0.95), to na 100% instrument.
-    if vdr < 0.95 and vstd < 0.15:
-        return "MUZYKA / INSTRUMENT"
+    # Wyliczamy wartość na naszej krzywej (treshold) dla danej entropii
+    prog_lster = -0.1 * (entropy - 3) ** 2 + 0.8
 
-    # 2. Główny klasyfikator (szukanie szumiących spółgłosek)
-    # Jeśli HZCRR przebija próg 0.025, mamy do czynienia z mową ludzką.
-    if hzcrr > 0.025:
+    # Sprawdzamy, gdzie leży nasz punkt
+    if lster < prog_lster:
         return "MOWA"
     else:
         return "MUZYKA / INSTRUMENT"

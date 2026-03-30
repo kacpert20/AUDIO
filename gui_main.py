@@ -109,7 +109,7 @@ class MainWindow(QMainWindow):
         entropy = oblicz_energy_entropy(ramki)
         zstd = oblicz_zstd(zcr)
         hzcrr = oblicz_hzcrr(zcr)
-        typ = klasyfikuj_mowa_muzyka(lster, hzcrr)
+        typ = klasyfikuj_mowa_muzyka(lster, entropy)
 
         # Zapisujemy wyniki do słownika (dla eksportu)
         self.aktualne_wyniki = {
