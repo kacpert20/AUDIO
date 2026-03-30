@@ -280,3 +280,14 @@ def klasyfikuj_mowa_muzyka(lster, entropy):
         return "MOWA"
     else:
         return "MUZYKA / INSTRUMENT"
+
+
+def oblicz_czas_ataku(amplitudy, fs):
+    """
+    Zwraca czas (w sekundach) od początku nagrania do osiągnięcia globalnego maksimum amplitudy.
+    Krótki czas to cecha charakterystyczna dla dźwięków perkusyjnych i szarpanych.
+    """
+    if len(amplitudy) == 0: return 0
+    idx_max = np.argmax(np.abs(amplitudy))
+    czas_ataku_sekundy = idx_max / fs
+    return czas_ataku_sekundy

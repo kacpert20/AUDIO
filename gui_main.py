@@ -10,7 +10,8 @@ from math_engine import (przygotuj_sygnal, podziel_na_ramki, oblicz_ste,
                          oblicz_glosnosc, oblicz_zcr, detekcja_ciszy,
                          estymuj_f0, estymuj_f0_amdf, oblicz_vstd, oblicz_vdr,
                          oblicz_vu, oblicz_lster, oblicz_energy_entropy,
-                         oblicz_zstd, oblicz_hzcrr, generuj_spektrogram, klasyfikuj_mowa_muzyka)
+                         oblicz_zstd, oblicz_hzcrr, generuj_spektrogram, klasyfikuj_mowa_muzyka,
+                         oblicz_czas_ataku)
 
 
 class MainWindow(QMainWindow):
@@ -70,7 +71,7 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(self.lbl_klasyfikacja)
 
         self.stats_labels = {}
-        for key in ["Info", "VSTD", "VDR", "VU", "LSTER", "Entropy", "ZSTD", "HZCRR"]:
+        for key in ["Info", "VSTD", "VDR", "VU", "LSTER", "Entropy", "ZSTD", "HZCRR", "Czas Ataku"]:
             lbl = QLabel(f"{key}: -")
             lbl.setStyleSheet("font-family: 'Consolas';")
             right_layout.addWidget(lbl)
@@ -109,6 +110,9 @@ class MainWindow(QMainWindow):
         entropy = oblicz_energy_entropy(ramki)
         zstd = oblicz_zstd(zcr)
         hzcrr = oblicz_hzcrr(zcr)
+        czas_ataku = oblicz_czas_ataku(amplitudy, fs)  # <--- DODANE WYLICZENIE
+
+        # Pamiętaj, by uaktualnić argumenty klasyfikatora do Twojej paraboli!
         typ = klasyfikuj_mowa_muzyka(lster, entropy)
 
         # Zapisujemy wyniki do słownika (dla eksportu)
@@ -122,6 +126,7 @@ class MainWindow(QMainWindow):
             "Entropy": f"{entropy:.2f}",
             "ZSTD": f"{zstd:.4f}",
             "HZCRR": f"{hzcrr:.4f}",
+            "Czas Ataku": f"{czas_ataku:.4f} s",
             "Klasyfikacja": typ
         }
         self.btn_eksport.setEnabled(True)
