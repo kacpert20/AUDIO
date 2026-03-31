@@ -60,15 +60,13 @@ def oblicz_zcr(ramki):
     zcr = np.sum(zmiany_znaku, axis=1) / (2 * N)
     return zcr
 
-def detekcja_ciszy(glosnosc, zcr, prog_glosnosci=0.02, prog_zcr=0.1):
+def detekcja_ciszy(glosnosc, zcr, prog_glosnosci_rel=0.1, prog_zcr=0.1):
     """
-    Na podstawie wyliczonej głośności i ZCR określa, czy dana ramka to cisza.
-    Zwraca tablicę wartości logicznych (True - cisza, False - dźwięk).
+    prog_glosnosci_rel: próg jako ułamek maksymalnej głośności w klipie (domyślnie 10%)
     """
-    # Zwraca True, jeśli OBA warunki są spełnione naraz
-    cisza = (glosnosc < prog_glosnosci) & (zcr < prog_zcr)
+    prog_glosnosci_abs = prog_glosnosci_rel * np.max(glosnosc)
+    cisza = (glosnosc < prog_glosnosci_abs) & (zcr < prog_zcr)
     return cisza
-
 
 def oblicz_autokorelacje(ramka):
     """
@@ -108,7 +106,7 @@ def estymuj_f0(ramki, fs):
     Określa też fragmenty dźwięczne (wartość > 0) i bezdźwięczne (wartość = 0).
     """
     f0_tab = np.zeros(len(ramki))
-    min_lag = int(fs / 500)
+    min_lag = int(fs / 2000)
     max_lag = int(fs / 50)
 
     for i, ramka in enumerate(ramki):
@@ -143,7 +141,7 @@ def estymuj_f0_amdf(ramki, fs):
     AMDF szuka MINIMUM różnicy, w przeciwieństwie do autokorelacji.
     """
     f0_tab = np.zeros(len(ramki))
-    min_lag = int(fs / 500)
+    min_lag = int(fs / 2000)
     max_lag = int(fs / 50)
 
     for i, ramka in enumerate(ramki):
@@ -279,7 +277,7 @@ def klasyfikuj_mowa_muzyka(lster, entropy):
     if lster < prog_lster:
         return "MOWA"
     else:
-        return "MUZYKA / INSTRUMENT"
+        return "MUZYKA / INSTRUMENT (LUB ZDANIE)"
 
 
 def oblicz_czas_ataku(amplitudy, fs):
