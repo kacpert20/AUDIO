@@ -24,7 +24,7 @@ Projekt opiera się wyłącznie na podstawowych operacjach matematycznych (`nump
 * **PyQtGraph** (wydajne renderowanie wykresów)
 * **Pandas** (opcjonalnie do pracy z bazami `.csv`)
 
-## 🚀 Jak uruchomić?
+##  Jak uruchomić?
 
 1. Sklonuj to repozytorium na swój dysk:
    ```bash
