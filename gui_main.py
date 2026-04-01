@@ -117,7 +117,22 @@ class MainWindow(QMainWindow):
 
         cisza = detekcja_ciszy(glosnosc, zcr)
         rozmiar_ramki = int(0.02 * fs)
+        for region in self.regiony_ciszy:
+            self.plot_sygnal.removeItem(region)
+        self.regiony_ciszy = []
 
+        # Narysuj nowe regiony ciszy
+        for i, jest_cisza in enumerate(cisza):
+            if jest_cisza:
+                t_start = i * rozmiar_ramki / fs
+                t_end = (i + 1) * rozmiar_ramki / fs
+                region = pg.LinearRegionItem(
+                    values=[t_start, t_end],
+                    brush=pg.mkBrush(255, 50, 50, 60),
+                    movable=False
+                )
+                self.plot_sygnal.addItem(region)
+                self.regiony_ciszy.append(region)
         vstd = oblicz_vstd(glosnosc)
         vdr = oblicz_vdr(glosnosc)
         vu = oblicz_vu(glosnosc)
@@ -169,8 +184,10 @@ class MainWindow(QMainWindow):
         self.krzywa_sygnalu.setData(x=os_x_sygnal, y=np.array(amplitudy, dtype=np.float64))
         self.krzywa_glosnosci.setData(x=os_x_ramki, y=glosnosc)
         self.krzywa_zcr.setData(x=os_x_ramki, y=zcr)
-        self.krzywa_f0.setData(x=os_x_ramki, y=f0_auto)
-        self.krzywa_f0_amdf.setData(x=os_x_ramki, y=f0_amdf)
+        mask_auto = f0_auto > 0
+        mask_amdf = f0_amdf > 0
+        self.krzywa_f0.setData(x=os_x_ramki[mask_auto], y=f0_auto[mask_auto])
+        self.krzywa_f0_amdf.setData(x=os_x_ramki[mask_amdf], y=f0_amdf[mask_amdf])
 
         # ---- SPEKTROGRAM ----
         spec_data = generuj_spektrogram(ramki)              # (n_ramek, n_freq_bins)
