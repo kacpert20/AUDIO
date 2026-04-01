@@ -1,4 +1,4 @@
-# AiPD - Analiza Dźwięku w Dziedzinie Czasu 🎙️🎸
+# AiPD - Analiza Dźwięku w Dziedzinie Czasu 
 
 Aplikacja okienkowa (GUI) służąca do zaawansowanej ekstrakcji, wizualizacji i analizy cech sygnału audio w dziedzinie czasu. Projekt zrealizowany w ramach przedmiotu Analiza i Przetwarzanie Dźwięku na ocenę 5.0. 
 
@@ -14,7 +14,7 @@ Aplikacja nie tylko obrazuje podstawowe właściwości sygnału (Frame-Level), a
 * **Eksport Danych:** Możliwość zapisu zebranych statystyk do pliku `.csv` jednym kliknięciem.
 * **Spektrogram:** Podgląd dystrybucji częstotliwości (formantów i alikwotów).
 
-## 🛠️ Wymagania i Architektura
+##  Wymagania i Architektura
 
 Projekt opiera się wyłącznie na podstawowych operacjach matematycznych (`numpy`), celowo unikając wysokopoziomowych bibliotek analizy dźwięku (np. `librosa`), aby zaprezentować matematyczne podstawy DSP (Digital Signal Processing).
 
